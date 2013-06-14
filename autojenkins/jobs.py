@@ -2,6 +2,7 @@ import sys
 import time
 import requests
 from jinja2 import Template
+import re
 
 
 API = 'api/python'
@@ -50,10 +51,28 @@ def _validate(response):
 class Jenkins(object):
     """Main class to interact with a Jenkins server."""
 
-    def __init__(self, base_url, auth=None, verify_ssl_cert=True):
+    def __init__(self, base_url, auth=None, verify_ssl_cert=True, githubOauth=False):
         self.ROOT = base_url
         self.auth = auth
         self.verify_ssl_cert = verify_ssl_cert
+        self.session = None
+        if githubOauth:
+            self._createSession()
+
+    def _createSession(self):
+        self.session = requests.Session()
+        r1 = self.session.get(self.ROOT + 'securityRealm/commenceLogin')
+        form_data = {x:y for x,y in re.findall('<input.*?name="([^"]*)".*?value="([^"]*)"', r1.content)}
+        data = dict(
+            login=self.auth[0],
+            password=self.auth[1],
+            authenticity_token=form_data['authenticity_token'],
+            return_to=form_data['return_to']
+        )
+        r2 = self.session.post('https://github.com/session', data=data)
+
+        if r2.status_code != 200:
+            print 'something when wrong in github auth'
 
     def _url(self, command, *args):
         """
@@ -73,10 +92,13 @@ class Jenkins(object):
 
         This will add required authentication and SSL verification arguments.
         """
-        response = requests.get(url,
-                                auth=self.auth,
-                                verify=self.verify_ssl_cert,
-                                **kwargs)
+        if self.session:
+            response = self.session.get(url, **kwargs)
+        else:
+            response = requests.get(url,
+                                    auth=self.auth,
+                                    verify=self.verify_ssl_cert,
+                                    **kwargs)
         return _validate(response)
 
     def _http_post(self, url, **kwargs):
